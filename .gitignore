@@ -1,3 +1,6 @@
+# API keys
+.env
+
 # Virtual environment and Python caches
 .venv/
 __pycache__/
@@ -13,6 +16,7 @@ data/processed/*.jsonl
 data/processed/splits.json
 data/processed/clean_notes.json
 data/taxonomy/
+data/rag/
 
 # Crawl and one-off helpers. Kept on disk, not part of this repo.
 download/

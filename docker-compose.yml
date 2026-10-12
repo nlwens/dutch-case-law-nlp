@@ -5,7 +5,11 @@ services:
       - "8000:8000"
     volumes:
       - ./models:/app/models:ro
+      - ./data/rag:/app/data/rag
       - hf-cache:/cache/huggingface
+    env_file:
+      - path: .env
+        required: false
     environment:
       HF_HOME: /cache/huggingface
 

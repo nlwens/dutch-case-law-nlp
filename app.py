@@ -1,6 +1,8 @@
-"""FastAPI service around the two JustID BERTje classifiers.
+"""FastAPI service around the two JustID BERTje classifiers and the RAG search.
 
-Endpoints match the 2024 delivery: paste text, or upload a PDF.
+Classifier endpoints match the 2024 delivery: paste text, or upload a PDF.
+/ask answers an English question from the indexed rulings; it is only
+available when data/rag/chroma has been built (see rag/build_index.py).
 """
 
 from __future__ import annotations
@@ -10,13 +12,18 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 import pdfplumber
+import requests
 import uvicorn
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from pydantic import BaseModel, Field
 
+import config
 from predict import JustIdModels
+from rag.answer import answer
+from rag.retrieve import Retriever
 
 _models: JustIdModels | None = None
+_retriever: Retriever | None = None
 
 
 class TextInput(BaseModel):
@@ -28,17 +35,45 @@ class PredictionOutput(BaseModel):
     bijzondere_kenmerken: dict[str, float]
 
 
+class AskInput(BaseModel):
+    question: str = Field(..., min_length=3, description="Question in English")
+    rechtsgebied: str | None = Field(
+        None, description="Only search rulings with this rechtsgebied, e.g. 'Strafrecht'"
+    )
+
+
+class Source(BaseModel):
+    ecli: str
+    court: str
+    date: str
+    section: str
+    rerank: float
+    text: str
+
+
+class AskOutput(BaseModel):
+    answer: str
+    refused: bool
+    dutch_query: str
+    sources: list[Source]
+    invalid_citations: list[str]
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    global _models
+    global _models, _retriever
     _models = JustIdModels()
+    if config.RAG_INDEX_DIR.exists():
+        _retriever = Retriever()
     yield
     _models = None
+    _retriever = None
 
 
 app = FastAPI(
     title="JustID",
-    description="Multi-label rechtsgebieden and bijzondere kenmerken for Dutch rulings.",
+    description="Multi-label rechtsgebieden and bijzondere kenmerken for Dutch rulings, "
+    "and question answering over indexed rulings.",
     version="2026.0",
     lifespan=lifespan,
 )
@@ -94,6 +129,7 @@ def root() -> dict:
         "endpoints": {
             "predict_text": "POST /predict-text",
             "predict_document": "POST /predict-document",
+            "ask": "POST /ask",
             "health": "GET /health",
             "docs": "GET /docs",
         },
@@ -106,6 +142,7 @@ def health() -> dict:
     return {
         "status": "healthy" if ready else "unhealthy",
         "model_loaded": ready,
+        "rag_loaded": _retriever is not None,
         "device": None if _models is None else str(_models.device),
     }
 
@@ -118,6 +155,29 @@ def predict_text(payload: TextInput) -> PredictionOutput:
 @app.post("/predict-document", response_model=PredictionOutput)
 def predict_document(file: UploadFile = File(...)) -> PredictionOutput:
     return _predict(_pdf_text(file))
+
+
+@app.post("/ask", response_model=AskOutput)
+def ask(payload: AskInput) -> AskOutput:
+    if _retriever is None:
+        raise HTTPException(status_code=503, detail="RAG index is not built")
+    if not config.GEMINI_API_KEY:
+        raise HTTPException(status_code=503, detail="GEMINI_API_KEY is not set")
+    try:
+        result = answer(payload.question, _retriever, rechtsgebied=payload.rechtsgebied)
+    except (requests.RequestException, RuntimeError) as exc:
+        raise HTTPException(status_code=502, detail="Gemini request failed") from exc
+    return AskOutput(
+        answer=result.text,
+        refused=result.refused,
+        dutch_query=result.dutch_query,
+        sources=[
+            Source(ecli=h.ecli, court=h.court, date=h.date, section=h.section,
+                   rerank=round(h.rerank, 3), text=h.text)
+            for h in result.hits
+        ],
+        invalid_citations=result.invalid_citations,
+    )
 
 
 if __name__ == "__main__":
