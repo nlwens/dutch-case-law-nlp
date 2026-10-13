@@ -38,7 +38,7 @@ Rules:
 - After every claim, cite the ruling by its ECLI in square brackets, exactly as written above the passage, for example [{example}]. Never refer to passage numbers.
 - Describe what these rulings show. Do not claim what courts do in general.
 - If the passages cover only part of the question, answer that part. Only if no passage is about the question, say so in one sentence.
-- Answer in English, in at most 6 sentences.
+- Answer in the language of the question, in at most 6 sentences.
 
 Passages:
 {passages}
@@ -84,14 +84,9 @@ def answers_question(question: str, draft: str) -> bool:
     return not reply.strip().upper().startswith("NOT")
 
 
-def answer(
-    question: str,
-    retriever: Retriever,
-    k: int = 5,
-    rechtsgebied: str | None = None,
-) -> Answer:
+def answer(question: str, retriever: Retriever) -> Answer:
     dutch = retriever.translate(question)
-    hits = retriever.search(question, dutch, k=k, rechtsgebied=rechtsgebied)
+    hits = retriever.search(question, dutch)
 
     draft = ""
     text = NOT_FOUND

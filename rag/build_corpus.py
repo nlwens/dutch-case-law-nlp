@@ -72,7 +72,6 @@ def main() -> None:
                 low = row["text"].lower()
                 if any(k in low for k in REFUSAL_KEYWORDS):
                     continue
-                row["split"] = split
                 row["topics"] = matched_topics(row)
                 rows.append(row)
 
@@ -88,8 +87,7 @@ def main() -> None:
         picked[row["ecli"]] = row
 
     config.RAG_DIR.mkdir(parents=True, exist_ok=True)
-    keep = ["ecli", "court", "date", "split", "rechtsgebieden",
-            "bijzondere_kenmerken", "topics", "text"]
+    keep = ["ecli", "court", "date", "topics", "text"]
     with open(config.RAG_CORPUS, "w", encoding="utf-8") as f:
         for row in sorted(picked.values(), key=lambda r: r["ecli"]):
             f.write(json.dumps({k: row[k] for k in keep}, ensure_ascii=False) + "\n")

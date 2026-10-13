@@ -26,7 +26,7 @@ RERANK_MODEL = "cross-encoder/mmarco-mMiniLMv2-L12-H384-v1"
 RERANK_THRESHOLD = 0.5
 # Retrieval runs locally; the question and the retrieved passages are sent
 # to the Gemini API for translation and answering.
-GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.5-flash-lite")
+GEMINI_MODEL = "gemini-3.5-flash-lite"
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 
 MODELS_DIR = BASE_DIR / "models"
@@ -37,9 +37,4 @@ BK_HUB_ID = "newnus/justid-bijzondere-kenmerken"
 MAX_LEN = 512
 LABEL_THRESHOLD = 0.5
 
-MIN_TEXT_LENGTH = 500
-MIN_LABEL_FREQUENCY = 100
-TRAIN_FRACTION = 0.8
-VAL_FRACTION = 0.1
-TEST_FRACTION = 0.1
 RANDOM_SEED = 42

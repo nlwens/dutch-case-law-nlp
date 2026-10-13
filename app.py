@@ -1,15 +1,14 @@
 """FastAPI service around the two JustID BERTje classifiers and the RAG search.
 
 Classifier endpoints match the 2024 delivery: paste text, or upload a PDF.
-/ask answers an English question from the indexed rulings; it is only
+/ask answers a question from the indexed rulings; it is only
 available when data/rag/chroma has been built (see rag/build_index.py).
 """
 
 from __future__ import annotations
 
-import tempfile
+import io
 from contextlib import asynccontextmanager
-from pathlib import Path
 
 import pdfplumber
 import requests
@@ -36,10 +35,7 @@ class PredictionOutput(BaseModel):
 
 
 class AskInput(BaseModel):
-    question: str = Field(..., min_length=3, description="Question in English")
-    rechtsgebied: str | None = Field(
-        None, description="Only search rulings with this rechtsgebied, e.g. 'Strafrecht'"
-    )
+    question: str = Field(..., min_length=3, description="Question in any language; the answer uses the same language")
 
 
 class Source(BaseModel):
@@ -97,24 +93,11 @@ def _pdf_text(upload: UploadFile) -> str:
     if not data:
         raise HTTPException(status_code=400, detail="Uploaded file is empty")
 
-    tmp_path = None
     try:
-        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
-            tmp.write(data)
-            tmp_path = Path(tmp.name)
-        pages: list[str] = []
-        with pdfplumber.open(tmp_path) as pdf:
-            for page in pdf.pages:
-                chunk = page.extract_text()
-                if chunk:
-                    pages.append(chunk)
-    except HTTPException:
-        raise
+        with pdfplumber.open(io.BytesIO(data)) as pdf:
+            pages = [page.extract_text() or "" for page in pdf.pages]
     except Exception as exc:
         raise HTTPException(status_code=400, detail="Could not read the PDF") from exc
-    finally:
-        if tmp_path is not None:
-            tmp_path.unlink(missing_ok=True)
 
     text = "\n".join(pages).strip()
     if not text:
@@ -164,7 +147,7 @@ def ask(payload: AskInput) -> AskOutput:
     if not config.GEMINI_API_KEY:
         raise HTTPException(status_code=503, detail="GEMINI_API_KEY is not set")
     try:
-        result = answer(payload.question, _retriever, rechtsgebied=payload.rechtsgebied)
+        result = answer(payload.question, _retriever)
     except (requests.RequestException, RuntimeError) as exc:
         raise HTTPException(status_code=502, detail="Gemini request failed") from exc
     return AskOutput(

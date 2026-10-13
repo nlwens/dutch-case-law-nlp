@@ -1,8 +1,6 @@
 """Embed every chunk with multilingual-e5 and store it in a local Chroma index.
 
-The index is rebuilt from scratch on each run. Each rechtsgebied becomes a
-boolean metadata field ("rg:Strafrecht": True) so retrieval can filter on it.
-Topic tags are left out on purpose: they are the evaluation ground truth.
+The index is rebuilt from scratch on each run.
 
 Run from the project root:
     .venv\\Scripts\\python.exe -m rag.build_index
@@ -24,19 +22,7 @@ import config  # noqa: E402
 
 BATCH_SIZE = 64
 ADD_BATCH = 2000
-
-
-def metadata(chunk: dict) -> dict:
-    meta = {
-        "ecli": chunk["ecli"],
-        "court": chunk["court"],
-        "date": chunk["date"],
-        "section": chunk["section"],
-        "heading": chunk["heading"],
-    }
-    for label in chunk["rechtsgebieden"]:
-        meta[f"rg:{label}"] = True
-    return meta
+METADATA = ["ecli", "court", "date", "section"]
 
 
 def main() -> None:
@@ -72,7 +58,7 @@ def main() -> None:
             ids=[c["chunk_id"] for c in batch],
             embeddings=vectors[i : i + ADD_BATCH].tolist(),
             documents=[c["text"] for c in batch],
-            metadatas=[metadata(c) for c in batch],
+            metadatas=[{k: c[k] for k in METADATA} for c in batch],
         )
     print(f"Index: {collection.count()} chunks -> {config.RAG_INDEX_DIR}")
 

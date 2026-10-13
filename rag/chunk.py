@@ -72,16 +72,16 @@ def paragraphs(text: str) -> list[str]:
     return out
 
 
-def sections(text: str) -> list[tuple[str, str, list[str]]]:
-    """(section, heading, paragraphs) blocks in document order."""
-    blocks = [("header", "", [])]
+def sections(text: str) -> list[tuple[str, list[str]]]:
+    """(section, paragraphs) blocks in document order."""
+    blocks: list[tuple[str, list[str]]] = [("header", [])]
     for para in paragraphs(text):
         name = heading_section(para)
         if name:
-            blocks.append((name, para, []))
+            blocks.append((name, []))
         else:
-            blocks[-1][2].append(para)
-    return [b for b in blocks if b[2]]
+            blocks[-1][1].append(para)
+    return [b for b in blocks if b[1]]
 
 
 def window(paras: list[str]) -> list[str]:
@@ -113,10 +113,10 @@ def main() -> None:
             row = json.loads(line)
             n_rulings += 1
             blocks = sections(row["text"])
-            if not any(name in ("court", "decision") for name, _, _ in blocks):
+            if not any(name in ("court", "decision") for name, _ in blocks):
                 no_court += 1
             index = 0
-            for name, heading, paras in blocks:
+            for name, paras in blocks:
                 for text in window(paras):
                     if len(text.split()) < MIN_CHUNK_WORDS:
                         continue
@@ -126,10 +126,7 @@ def main() -> None:
                         "ecli": row["ecli"],
                         "court": row["court"],
                         "date": row["date"],
-                        "rechtsgebieden": row["rechtsgebieden"],
-                        "topics": row["topics"],
                         "section": name,
-                        "heading": heading,
                         "text": text,
                     })
 

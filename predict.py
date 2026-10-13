@@ -22,69 +22,49 @@ TaskScores = dict[str, float]
 class JustIdModels:
     """Both classifiers, shared tokenizer settings, one `predict` call."""
 
-    def __init__(
-        self,
-        rg_dir: Path | str | None = None,
-        bk_dir: Path | str | None = None,
-        threshold: float | None = None,
-        max_len: int | None = None,
-        device: str | None = None,
-    ) -> None:
-        self.rg_source = _resolve(rg_dir, config.RG_MODEL_DIR, config.RG_HUB_ID)
-        self.bk_source = _resolve(bk_dir, config.BK_MODEL_DIR, config.BK_HUB_ID)
-        self.threshold = config.LABEL_THRESHOLD if threshold is None else threshold
-        self.max_len = config.MAX_LEN if max_len is None else max_len
-        if device is None:
-            device = "cuda" if torch.cuda.is_available() else "cpu"
-        self.device = torch.device(device)
+    def __init__(self) -> None:
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        rg_source = _resolve(config.RG_MODEL_DIR, config.RG_HUB_ID)
+        bk_source = _resolve(config.BK_MODEL_DIR, config.BK_HUB_ID)
+        self.rg_labels = _load_labels(rg_source)
+        self.bk_labels = _load_labels(bk_source)
+        self.rg_tokenizer = AutoTokenizer.from_pretrained(rg_source)
+        self.bk_tokenizer = AutoTokenizer.from_pretrained(bk_source)
+        self.rg_model = _load_model(rg_source, len(self.rg_labels), self.device)
+        self.bk_model = _load_model(bk_source, len(self.bk_labels), self.device)
 
-        self.rg_labels = _load_labels(self.rg_source)
-        self.bk_labels = _load_labels(self.bk_source)
-        self.rg_tokenizer = AutoTokenizer.from_pretrained(self.rg_source)
-        self.bk_tokenizer = AutoTokenizer.from_pretrained(self.bk_source)
-        self.rg_model = _load_model(self.rg_source, len(self.rg_labels), self.device)
-        self.bk_model = _load_model(self.bk_source, len(self.bk_labels), self.device)
-
-    def predict(self, text: str, threshold: float | None = None) -> dict[str, TaskScores]:
+    def predict(self, text: str) -> dict[str, TaskScores]:
         """Return kept labels with scores for both tasks."""
         if not text or not text.strip():
             raise ValueError("Input text cannot be empty")
-        cut = self.threshold if threshold is None else threshold
         return {
-            "rechtsgebieden": self._score(text, self.rg_tokenizer, self.rg_model, self.rg_labels, cut),
+            "rechtsgebieden": self._score(text, self.rg_tokenizer, self.rg_model, self.rg_labels),
             "bijzondere_kenmerken": self._score(
-                text, self.bk_tokenizer, self.bk_model, self.bk_labels, cut
+                text, self.bk_tokenizer, self.bk_model, self.bk_labels
             ),
         }
 
-    def _score(
-        self,
-        text: str,
-        tokenizer,
-        model,
-        labels: list[str],
-        threshold: float,
-    ) -> TaskScores:
+    def _score(self, text: str, tokenizer, model, labels: list[str]) -> TaskScores:
         inputs = tokenizer(
             text,
             return_tensors="pt",
             truncation=True,
             padding="max_length",
-            max_length=self.max_len,
+            max_length=config.MAX_LEN,
         )
         inputs = {key: value.to(self.device) for key, value in inputs.items()}
         with torch.no_grad():
             logits = model(**inputs).logits
             probs = torch.sigmoid(logits).squeeze(0).cpu().tolist()
-        if isinstance(probs, float):
-            probs = [probs]
-        kept = {label: round(float(score), 4) for label, score in zip(labels, probs) if score >= threshold}
+        kept = {
+            label: round(float(score), 4)
+            for label, score in zip(labels, probs)
+            if score >= config.LABEL_THRESHOLD
+        }
         return dict(sorted(kept.items(), key=lambda item: item[1], reverse=True))
 
 
-def _resolve(override: Path | str | None, local: Path, hub_id: str) -> str:
-    if override is not None:
-        return str(override)
+def _resolve(local: Path, hub_id: str) -> str:
     if (local / "model.safetensors").exists() or (local / "pytorch_model.bin").exists():
         return str(local)
     return hub_id

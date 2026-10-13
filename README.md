@@ -1,10 +1,12 @@
-# JustID machine learning
+# Dutch case law NLP
 
-Student project (Saxion / JustID): two BERTje classifiers that read a Dutch court ruling and assign **rechtsgebieden** (law areas) and **bijzondere kenmerken** (procedure features). Both tasks are multi-label. A label is kept if its sigmoid score is at least 0.5.
+Classification and question answering over Dutch court rulings. Started as a student project for Saxion / JustID.
+
+Two BERTje classifiers that read a Dutch court ruling and assign **rechtsgebieden** (law areas) and **bijzondere kenmerken** (procedure features). Both tasks are multi-label. A label is kept if its sigmoid score is at least 0.5.
 
 Input is ruling text only. Output is two `{label: score}` maps.
 
-A second part, [RAG](#rag-questions-over-rulings), answers English questions from 2 500 indexed rulings and cites each claim by ECLI.
+A second part, [RAG](#rag-questions-over-rulings), answers questions from 2 500 indexed rulings and cites each claim by ECLI.
 
 Weights live on the Hugging Face Hub, not in this repo:
 
@@ -33,7 +35,7 @@ Natural_test is slightly higher than the balanced test. The models did not overf
 Python 3.12. GPU is optional (RTX 3050 / CUDA 12.1 was used for training).
 
 ```powershell
-cd justid-machinelearning
+cd dutch-case-law-nlp
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
@@ -60,7 +62,7 @@ Open http://127.0.0.1:8000/docs
 
 - `POST /predict-text` — JSON `{"text": "..."}`
 - `POST /predict-document` — PDF upload
-- `POST /ask` — JSON `{"question": "...", "rechtsgebied": null}`, see [RAG](#rag-questions-over-rulings)
+- `POST /ask` — JSON `{"question": "..."}`, see [RAG](#rag-questions-over-rulings)
 - `GET /health`
 
 ### Docker
@@ -75,16 +77,18 @@ Same docs URL as above. Stop with `Ctrl+C` or `docker compose down`.
 
 ## RAG: questions over rulings
 
-Ask in English, get an English answer built only from passages of Dutch rulings, with an ECLI after every claim. If the rulings do not cover the question, the answer is `Not found in the provided rulings.`
+Ask in any language, get an answer in that language built only from passages of Dutch rulings, with an ECLI after every claim. If the rulings do not cover the question, the answer is `Not found in the provided rulings.` in English, and `/ask` returns `"refused": true`. The evaluation questions are in English.
 
 Nothing is trained. All models are used as they are:
 
 | Step | Model |
 |---|---|
 | Translate the question to Dutch | Gemini (`gemini-3.5-flash-lite`, API) |
-| Vector search, 30 candidates | `intfloat/multilingual-e5-base` + Chroma, cosine |
+| Vector search, 30 candidates each for the Dutch and the original question | `intfloat/multilingual-e5-base` + Chroma, cosine |
 | Rerank, keep probability ≥ 0.5, at most 5 passages, 2 per ruling | `cross-encoder/mmarco-mMiniLMv2-L12-H384-v1` |
 | Answer from the kept passages | Gemini |
+
+The original question is searched next to its translation because the translation sometimes gets a legal term wrong. In one test question, Gemini invented the Dutch word *rijonderdrinkingszaken* for drink-driving cases; with the Dutch query alone, no passage passed the reranker.
 
 Rulings are cut into passages of about 250 words that never cross a heading. Each passage carries its section (court's assessment, party argument, decision, advisory opinion, ...), and the prompt tells the model that a party argument is not a finding of the court.
 
@@ -97,13 +101,15 @@ Two ways to refuse: no passage passes the reranker (Gemini is not asked to answe
 | Metric | Result |
 |---|---|
 | Topic questions with at least one on-topic passage | 24 / 24 |
-| Kept passages from on-topic rulings | 90 % |
-| Topic questions answered | 24 / 24 |
+| Kept passages from on-topic rulings | 95 % |
+| Topic questions answered | 22 / 24 |
 | Refusal questions refused | 5 / 5 |
 | Cited ECLIs outside the given passages | 0 |
 | Median time per question (GPU retrieval) | 4.7 s |
 
-"On-topic" means the ruling matches the topic's keyword rule in `rag/build_corpus.py`. That rule says a ruling is about the topic, not that the passage answers the question. So three answers were also checked by hand against their passages (`notebooks/05_rag.ipynb`): 9 of 9 claims match the cited ruling. One answer is correct but incomplete, because none of its passages says how the case ended.
+The two unanswered topic questions (landlord's grounds for termination, rent arrears and eviction) got on-topic passages, but the draft answers were about side issues (fixed-term leases, who to sue), and the check step judged that they did not answer the question.
+
+"On-topic" means the ruling matches the topic's keyword rule in `rag/build_corpus.py`. That rule says a ruling is about the topic, not that the passage answers the question. So three answers were also checked by hand against their passages (`notebooks/05_rag.ipynb`): of 9 claims, 8 match the cited ruling and 1 cites a ruling that is about TBS in general for a point about compulsory treatment. One answer is correct but incomplete: it skips the passage where the court set child support to nil because of low income.
 
 ### How to run
 
@@ -154,6 +160,7 @@ models/                local weights (gitignored)
 - Rare labels stay weak at threshold 0.5. Per-label thresholds were not searched.
 - PDF upload needs a text layer. Scanned pages return 400.
 - RAG: 29 questions is a small test set, and the answer prompt was adjusted after seeing false refusals on some of them, so they are not fully held out.
-- RAG: a cited ECLI is checked to be among the passages, not that the claim is right. The model only knows its five passages, so answers can be incomplete.
+- RAG: Gemini's translation differs slightly between runs even at temperature 0, and a different Dutch query retrieves different passages. Between two runs of the same code, two questions flipped from answered to refused.
+- RAG: a cited ECLI is checked to be among the passages, not that the claim is right. The model only knows its five passages and does not always use the best one, so answers can be incomplete.
 - RAG: some section labels are wrong. Appeal rulings often restate a party's grounds under a "beoordeling" heading, which is labelled as the court's assessment.
 - RAG: the question and the retrieved passages are sent to the Gemini API. The rulings are public, but do not send confidential text. On the free tier, Google may use the data to improve its models.
